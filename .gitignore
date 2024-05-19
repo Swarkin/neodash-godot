@@ -1,1 +1,4 @@
 .godot/
+export/*
+!export/.gdignore
+!export/web_nothreads_release_custom.zip
