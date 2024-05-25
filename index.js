@@ -28,7 +28,7 @@ var readyPromise = new Promise((resolve, reject) => {
   readyPromiseResolve = resolve;
   readyPromiseReject = reject;
 });
-["_memory","__Z14godot_web_mainiPPc","___indirect_function_table","_main","onRuntimeInitialized"].forEach((prop) => {
+["_memory","___indirect_function_table","__Z14godot_web_mainiPPc","_main","onRuntimeInitialized"].forEach((prop) => {
   if (!Object.getOwnPropertyDescriptor(readyPromise, prop)) {
     Object.defineProperty(readyPromise, prop, {
       get: () => abort('You are getting ' + prop + ' on the Promise object, instead of the instance. Use .then() to get called back with the instance, see the MODULARIZE docs in src/settings.js'),
@@ -384,13 +384,13 @@ function initRuntime() {
 
   checkStackCookie();
 
-  
+  SOCKFS.root = FS.mount(SOCKFS, {}, null);
+
 if (!Module['noFSInit'] && !FS.init.initialized)
   FS.init();
 FS.ignorePermissions = false;
 
 TTY.init();
-SOCKFS.root = FS.mount(SOCKFS, {}, null);
   callRuntimeCallbacks(__ATINIT__);
 }
 
@@ -1034,6 +1034,19 @@ function dbg(...args) {
     };
   var ___call_sighandler = (fp, sig) => getWasmTableEntry(fp)(sig);
 
+  var initRandomFill = () => {
+      if (typeof crypto == 'object' && typeof crypto['getRandomValues'] == 'function') {
+        // for modern web browsers
+        return (view) => crypto.getRandomValues(view);
+      } else
+      // we couldn't find a proper implementation, as Math.random() is not suitable for /dev/random, see emscripten-core/emscripten/pull/7096
+      abort('no cryptographic support found for randomDevice. consider polyfilling it if you want to use something insecure like Math.random(), e.g. put this in a --pre-js: var crypto = { getRandomValues: (array) => { for (var i = 0; i < array.length; i++) array[i] = (Math.random()*256)|0 } };');
+    };
+  var randomFill = (view) => {
+      // Lazily init on the first invocation.
+      return (randomFill = initRandomFill())(view);
+    };
+  
   var PATH = {
   isAbs:(path) => path.charAt(0) === '/',
   splitPath:(filename) => {
@@ -1102,20 +1115,6 @@ function dbg(...args) {
   join:(...paths) => PATH.normalize(paths.join('/')),
   join2:(l, r) => PATH.normalize(l + '/' + r),
   };
-  
-  var initRandomFill = () => {
-      if (typeof crypto == 'object' && typeof crypto['getRandomValues'] == 'function') {
-        // for modern web browsers
-        return (view) => crypto.getRandomValues(view);
-      } else
-      // we couldn't find a proper implementation, as Math.random() is not suitable for /dev/random, see emscripten-core/emscripten/pull/7096
-      abort('no cryptographic support found for randomDevice. consider polyfilling it if you want to use something insecure like Math.random(), e.g. put this in a --pre-js: var crypto = { getRandomValues: (array) => { for (var i = 0; i < array.length; i++) array[i] = (Math.random()*256)|0 } };');
-    };
-  var randomFill = (view) => {
-      // Lazily init on the first invocation.
-      return (randomFill = initRandomFill())(view);
-    };
-  
   
   
   var PATH_FS = {
@@ -4002,169 +4001,6 @@ function dbg(...args) {
         abort('FS.standardizePath has been removed; use PATH.normalize instead');
       },
   };
-  
-  var SYSCALLS = {
-  DEFAULT_POLLMASK:5,
-  calculateAt(dirfd, path, allowEmpty) {
-        if (PATH.isAbs(path)) {
-          return path;
-        }
-        // relative path
-        var dir;
-        if (dirfd === -100) {
-          dir = FS.cwd();
-        } else {
-          var dirstream = SYSCALLS.getStreamFromFD(dirfd);
-          dir = dirstream.path;
-        }
-        if (path.length == 0) {
-          if (!allowEmpty) {
-            throw new FS.ErrnoError(44);;
-          }
-          return dir;
-        }
-        return PATH.join2(dir, path);
-      },
-  doStat(func, path, buf) {
-        var stat = func(path);
-        HEAP32[((buf)>>2)] = stat.dev;
-        HEAP32[(((buf)+(4))>>2)] = stat.mode;
-        HEAPU32[(((buf)+(8))>>2)] = stat.nlink;
-        HEAP32[(((buf)+(12))>>2)] = stat.uid;
-        HEAP32[(((buf)+(16))>>2)] = stat.gid;
-        HEAP32[(((buf)+(20))>>2)] = stat.rdev;
-        HEAP64[(((buf)+(24))>>3)] = BigInt(stat.size);
-        HEAP32[(((buf)+(32))>>2)] = 4096;
-        HEAP32[(((buf)+(36))>>2)] = stat.blocks;
-        var atime = stat.atime.getTime();
-        var mtime = stat.mtime.getTime();
-        var ctime = stat.ctime.getTime();
-        HEAP64[(((buf)+(40))>>3)] = BigInt(Math.floor(atime / 1000));
-        HEAPU32[(((buf)+(48))>>2)] = (atime % 1000) * 1000;
-        HEAP64[(((buf)+(56))>>3)] = BigInt(Math.floor(mtime / 1000));
-        HEAPU32[(((buf)+(64))>>2)] = (mtime % 1000) * 1000;
-        HEAP64[(((buf)+(72))>>3)] = BigInt(Math.floor(ctime / 1000));
-        HEAPU32[(((buf)+(80))>>2)] = (ctime % 1000) * 1000;
-        HEAP64[(((buf)+(88))>>3)] = BigInt(stat.ino);
-        return 0;
-      },
-  doMsync(addr, stream, len, flags, offset) {
-        if (!FS.isFile(stream.node.mode)) {
-          throw new FS.ErrnoError(43);
-        }
-        if (flags & 2) {
-          // MAP_PRIVATE calls need not to be synced back to underlying fs
-          return 0;
-        }
-        var buffer = HEAPU8.slice(addr, addr + len);
-        FS.msync(stream, buffer, offset, len, flags);
-      },
-  getStreamFromFD(fd) {
-        var stream = FS.getStreamChecked(fd);
-        return stream;
-      },
-  varargs:undefined,
-  getStr(ptr) {
-        var ret = UTF8ToString(ptr);
-        return ret;
-      },
-  };
-  function ___syscall__newselect(nfds, readfds, writefds, exceptfds, timeout) {
-  try {
-  
-      // readfds are supported,
-      // writefds checks socket open status
-      // exceptfds are supported, although on web, such exceptional conditions never arise in web sockets
-      //                          and so the exceptfds list will always return empty.
-      // timeout is supported, although on SOCKFS and PIPEFS these are ignored and always treated as 0 - fully async
-      assert(nfds <= 64, 'nfds must be less than or equal to 64');  // fd sets have 64 bits // TODO: this could be 1024 based on current musl headers
-  
-      var total = 0;
-  
-      var srcReadLow = (readfds ? HEAP32[((readfds)>>2)] : 0),
-          srcReadHigh = (readfds ? HEAP32[(((readfds)+(4))>>2)] : 0);
-      var srcWriteLow = (writefds ? HEAP32[((writefds)>>2)] : 0),
-          srcWriteHigh = (writefds ? HEAP32[(((writefds)+(4))>>2)] : 0);
-      var srcExceptLow = (exceptfds ? HEAP32[((exceptfds)>>2)] : 0),
-          srcExceptHigh = (exceptfds ? HEAP32[(((exceptfds)+(4))>>2)] : 0);
-  
-      var dstReadLow = 0,
-          dstReadHigh = 0;
-      var dstWriteLow = 0,
-          dstWriteHigh = 0;
-      var dstExceptLow = 0,
-          dstExceptHigh = 0;
-  
-      var allLow = (readfds ? HEAP32[((readfds)>>2)] : 0) |
-                   (writefds ? HEAP32[((writefds)>>2)] : 0) |
-                   (exceptfds ? HEAP32[((exceptfds)>>2)] : 0);
-      var allHigh = (readfds ? HEAP32[(((readfds)+(4))>>2)] : 0) |
-                    (writefds ? HEAP32[(((writefds)+(4))>>2)] : 0) |
-                    (exceptfds ? HEAP32[(((exceptfds)+(4))>>2)] : 0);
-  
-      var check = function(fd, low, high, val) {
-        return (fd < 32 ? (low & val) : (high & val));
-      };
-  
-      for (var fd = 0; fd < nfds; fd++) {
-        var mask = 1 << (fd % 32);
-        if (!(check(fd, allLow, allHigh, mask))) {
-          continue;  // index isn't in the set
-        }
-  
-        var stream = SYSCALLS.getStreamFromFD(fd);
-  
-        var flags = SYSCALLS.DEFAULT_POLLMASK;
-  
-        if (stream.stream_ops.poll) {
-          var timeoutInMillis = -1;
-          if (timeout) {
-            // select(2) is declared to accept "struct timeval { time_t tv_sec; suseconds_t tv_usec; }".
-            // However, musl passes the two values to the syscall as an array of long values.
-            // Note that sizeof(time_t) != sizeof(long) in wasm32. The former is 8, while the latter is 4.
-            // This means using "C_STRUCTS.timeval.tv_usec" leads to a wrong offset.
-            // So, instead, we use POINTER_SIZE.
-            var tv_sec = (readfds ? HEAP32[((timeout)>>2)] : 0),
-                tv_usec = (readfds ? HEAP32[(((timeout)+(4))>>2)] : 0);
-            timeoutInMillis = (tv_sec + tv_usec / 1000000) * 1000;
-          }
-          flags = stream.stream_ops.poll(stream, timeoutInMillis);
-        }
-  
-        if ((flags & 1) && check(fd, srcReadLow, srcReadHigh, mask)) {
-          fd < 32 ? (dstReadLow = dstReadLow | mask) : (dstReadHigh = dstReadHigh | mask);
-          total++;
-        }
-        if ((flags & 4) && check(fd, srcWriteLow, srcWriteHigh, mask)) {
-          fd < 32 ? (dstWriteLow = dstWriteLow | mask) : (dstWriteHigh = dstWriteHigh | mask);
-          total++;
-        }
-        if ((flags & 2) && check(fd, srcExceptLow, srcExceptHigh, mask)) {
-          fd < 32 ? (dstExceptLow = dstExceptLow | mask) : (dstExceptHigh = dstExceptHigh | mask);
-          total++;
-        }
-      }
-  
-      if (readfds) {
-        HEAP32[((readfds)>>2)] = dstReadLow;
-        HEAP32[(((readfds)+(4))>>2)] = dstReadHigh;
-      }
-      if (writefds) {
-        HEAP32[((writefds)>>2)] = dstWriteLow;
-        HEAP32[(((writefds)+(4))>>2)] = dstWriteHigh;
-      }
-      if (exceptfds) {
-        HEAP32[((exceptfds)>>2)] = dstExceptLow;
-        HEAP32[(((exceptfds)+(4))>>2)] = dstExceptHigh;
-      }
-  
-      return total;
-    } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
-    return -e.errno;
-  }
-  }
-
   var SOCKFS = {
   mount(mount) {
         // If Module['websocket'] has already been defined (e.g. for configuring
@@ -5090,6 +4926,74 @@ function dbg(...args) {
   }
   }
 
+  
+  
+  var SYSCALLS = {
+  DEFAULT_POLLMASK:5,
+  calculateAt(dirfd, path, allowEmpty) {
+        if (PATH.isAbs(path)) {
+          return path;
+        }
+        // relative path
+        var dir;
+        if (dirfd === -100) {
+          dir = FS.cwd();
+        } else {
+          var dirstream = SYSCALLS.getStreamFromFD(dirfd);
+          dir = dirstream.path;
+        }
+        if (path.length == 0) {
+          if (!allowEmpty) {
+            throw new FS.ErrnoError(44);;
+          }
+          return dir;
+        }
+        return PATH.join2(dir, path);
+      },
+  doStat(func, path, buf) {
+        var stat = func(path);
+        HEAP32[((buf)>>2)] = stat.dev;
+        HEAP32[(((buf)+(4))>>2)] = stat.mode;
+        HEAPU32[(((buf)+(8))>>2)] = stat.nlink;
+        HEAP32[(((buf)+(12))>>2)] = stat.uid;
+        HEAP32[(((buf)+(16))>>2)] = stat.gid;
+        HEAP32[(((buf)+(20))>>2)] = stat.rdev;
+        HEAP64[(((buf)+(24))>>3)] = BigInt(stat.size);
+        HEAP32[(((buf)+(32))>>2)] = 4096;
+        HEAP32[(((buf)+(36))>>2)] = stat.blocks;
+        var atime = stat.atime.getTime();
+        var mtime = stat.mtime.getTime();
+        var ctime = stat.ctime.getTime();
+        HEAP64[(((buf)+(40))>>3)] = BigInt(Math.floor(atime / 1000));
+        HEAPU32[(((buf)+(48))>>2)] = (atime % 1000) * 1000;
+        HEAP64[(((buf)+(56))>>3)] = BigInt(Math.floor(mtime / 1000));
+        HEAPU32[(((buf)+(64))>>2)] = (mtime % 1000) * 1000;
+        HEAP64[(((buf)+(72))>>3)] = BigInt(Math.floor(ctime / 1000));
+        HEAPU32[(((buf)+(80))>>2)] = (ctime % 1000) * 1000;
+        HEAP64[(((buf)+(88))>>3)] = BigInt(stat.ino);
+        return 0;
+      },
+  doMsync(addr, stream, len, flags, offset) {
+        if (!FS.isFile(stream.node.mode)) {
+          throw new FS.ErrnoError(43);
+        }
+        if (flags & 2) {
+          // MAP_PRIVATE calls need not to be synced back to underlying fs
+          return 0;
+        }
+        var buffer = HEAPU8.slice(addr, addr + len);
+        FS.msync(stream, buffer, offset, len, flags);
+      },
+  getStreamFromFD(fd) {
+        var stream = FS.getStreamChecked(fd);
+        return stream;
+      },
+  varargs:undefined,
+  getStr(ptr) {
+        var ret = UTF8ToString(ptr);
+        return ret;
+      },
+  };
   function ___syscall_chdir(path) {
   try {
   
@@ -5337,27 +5241,6 @@ function dbg(...args) {
       var errno = writeSockaddr(addr, sock.family, DNS.lookup_name(sock.saddr || '0.0.0.0'), sock.sport, addrlen);
       assert(!errno);
       return 0;
-    } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
-    return -e.errno;
-  }
-  }
-
-  function ___syscall_getsockopt(fd, level, optname, optval, optlen, d1) {
-  try {
-  
-      var sock = getSocketFromFD(fd);
-      // Minimal getsockopt aimed at resolving https://github.com/emscripten-core/emscripten/issues/2211
-      // so only supports SOL_SOCKET with SO_ERROR.
-      if (level === 1) {
-        if (optname === 4) {
-          HEAP32[((optval)>>2)] = sock.error;
-          HEAP32[((optlen)>>2)] = 4;
-          sock.error = null; // Clear the error (The SO_ERROR option obtains and then clears this field).
-          return 0;
-        }
-      }
-      return -50; // The option is unknown at the level indicated.
     } catch (e) {
     if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
@@ -7263,13 +7146,15 @@ function dbg(...args) {
       _exit(status);
     };
 
-
   var getHeapMax = () =>
       // Stay one Wasm page short of 4GB: while e.g. Chrome is able to allocate
       // full 4GB Wasm memories, the size will wrap back to 0 bytes in Wasm side
       // for any code that deals with heap sizes, which would require special
       // casing all heap size related code to treat 0 specially.
       2147483648;
+  var _emscripten_get_heap_max = () => getHeapMax();
+
+
   
   var growMemory = (size) => {
       var b = wasmMemory.buffer;
@@ -7658,7 +7543,6 @@ function dbg(...args) {
       return 0;
     };
 
-
   function _fd_close(fd) {
   try {
   
@@ -7953,52 +7837,6 @@ function dbg(...args) {
       }
       ai = allocaddrinfo(family, type, proto, null, addr, port);
       HEAPU32[((out)>>2)] = ai;
-      return 0;
-    };
-
-  
-  
-  
-  var _getnameinfo = (sa, salen, node, nodelen, serv, servlen, flags) => {
-      var info = readSockaddr(sa, salen);
-      if (info.errno) {
-        return -6;
-      }
-      var port = info.port;
-      var addr = info.addr;
-  
-      var overflowed = false;
-  
-      if (node && nodelen) {
-        var lookup;
-        if ((flags & 1) || !(lookup = DNS.lookup_addr(addr))) {
-          if (flags & 8) {
-            return -2;
-          }
-        } else {
-          addr = lookup;
-        }
-        var numBytesWrittenExclNull = stringToUTF8(addr, node, nodelen);
-  
-        if (numBytesWrittenExclNull+1 >= nodelen) {
-          overflowed = true;
-        }
-      }
-  
-      if (serv && servlen) {
-        port = '' + port;
-        var numBytesWrittenExclNull = stringToUTF8(port, serv, servlen);
-  
-        if (numBytesWrittenExclNull+1 >= servlen) {
-          overflowed = true;
-        }
-      }
-  
-      if (overflowed) {
-        // Note: even when we overflow, getnameinfo() is specced to write out the truncated results.
-        return -12;
-      }
-  
       return 0;
     };
 
@@ -9311,7 +9149,7 @@ function dbg(...args) {
   
   var GodotRuntime = {
   get_func:function (ptr) {
-  			return wasmTable.get(ptr); // eslint-disable-line no-undef
+  			return wasmTable.get(ptr);
   		},
   error:function () {
   			err.apply(null, Array.from(arguments)); // eslint-disable-line no-undef
@@ -9320,16 +9158,16 @@ function dbg(...args) {
   			out.apply(null, Array.from(arguments)); // eslint-disable-line no-undef
   		},
   malloc:function (p_size) {
-  			return _malloc(p_size); // eslint-disable-line no-undef
+  			return _malloc(p_size);
   		},
   free:function (p_ptr) {
-  			_free(p_ptr); // eslint-disable-line no-undef
+  			_free(p_ptr);
   		},
   getHeapValue:function (p_ptr, p_type) {
-  			return getValue(p_ptr, p_type); // eslint-disable-line no-undef
+  			return getValue(p_ptr, p_type);
   		},
   setHeapValue:function (p_ptr, p_value, p_type) {
-  			setValue(p_ptr, p_value, p_type); // eslint-disable-line no-undef
+  			setValue(p_ptr, p_value, p_type);
   		},
   heapSub:function (p_heap, p_ptr, p_len) {
   			const bytes = p_heap.BYTES_PER_ELEMENT;
@@ -9344,7 +9182,7 @@ function dbg(...args) {
   			return p_dst.set(p_src, p_ptr / bytes);
   		},
   parseString:function (p_ptr) {
-  			return UTF8ToString(p_ptr); // eslint-disable-line no-undef
+  			return UTF8ToString(p_ptr);
   		},
   parseStringArray:function (p_ptr, p_size) {
   			const strings = [];
@@ -9355,12 +9193,12 @@ function dbg(...args) {
   			return strings;
   		},
   strlen:function (p_str) {
-  			return lengthBytesUTF8(p_str); // eslint-disable-line no-undef
+  			return lengthBytesUTF8(p_str);
   		},
   allocString:function (p_str) {
   			const length = GodotRuntime.strlen(p_str) + 1;
   			const c_str = GodotRuntime.malloc(length);
-  			stringToUTF8(p_str, c_str, length); // eslint-disable-line no-undef
+  			stringToUTF8(p_str, c_str, length);
   			return c_str;
   		},
   allocStringArray:function (p_strings) {
@@ -9378,7 +9216,7 @@ function dbg(...args) {
   			GodotRuntime.free(p_ptr);
   		},
   stringToHeap:function (p_str, p_ptr, p_len) {
-  			return stringToUTF8Array(p_str, HEAP8, p_ptr, p_len); // eslint-disable-line no-undef
+  			return stringToUTF8Array(p_str, HEAP8, p_ptr, p_len);
   		},
   };
   
@@ -9405,7 +9243,7 @@ function dbg(...args) {
   			}
   		},
   locate_file:function (file) {
-  			return Module['locateFile'](file); // eslint-disable-line no-undef
+  			return Module['locateFile'](file);
   		},
   clear:function () {
   			GodotConfig.canvas = null;
@@ -10013,7 +9851,7 @@ function dbg(...args) {
   			return 0;
   		},
   _updateGL:function () {
-  			const gl_context_handle = _emscripten_webgl_get_current_context(); // eslint-disable-line no-undef
+  			const gl_context_handle = _emscripten_webgl_get_current_context();
   			const gl = GL.getContext(gl_context_handle);
   			if (gl) {
   				GL.resizeOffscreenFramebuffer(gl);
@@ -10471,6 +10309,57 @@ function dbg(...args) {
 
   function _godot_js_display_window_title_set(p_data) {
   		document.title = GodotRuntime.parseString(p_data);
+  	}
+
+  function _godot_js_eval(p_js, p_use_global_ctx, p_union_ptr, p_byte_arr, p_byte_arr_write, p_callback) {
+  		const js_code = GodotRuntime.parseString(p_js);
+  		let eval_ret = null;
+  		try {
+  			if (p_use_global_ctx) {
+  				// indirect eval call grants global execution context
+  				const global_eval = eval; // eslint-disable-line no-eval
+  				eval_ret = global_eval(js_code);
+  			} else {
+  				eval_ret = eval(js_code); // eslint-disable-line no-eval
+  			}
+  		} catch (e) {
+  			GodotRuntime.error(e);
+  		}
+  
+  		switch (typeof eval_ret) {
+  		case 'boolean':
+  			GodotRuntime.setHeapValue(p_union_ptr, eval_ret, 'i32');
+  			return 1; // BOOL
+  
+  		case 'number':
+  			GodotRuntime.setHeapValue(p_union_ptr, eval_ret, 'double');
+  			return 3; // FLOAT
+  
+  		case 'string':
+  			GodotRuntime.setHeapValue(p_union_ptr, GodotRuntime.allocString(eval_ret), '*');
+  			return 4; // STRING
+  
+  		case 'object':
+  			if (eval_ret === null) {
+  				break;
+  			}
+  
+  			if (ArrayBuffer.isView(eval_ret) && !(eval_ret instanceof Uint8Array)) {
+  				eval_ret = new Uint8Array(eval_ret.buffer);
+  			} else if (eval_ret instanceof ArrayBuffer) {
+  				eval_ret = new Uint8Array(eval_ret);
+  			}
+  			if (eval_ret instanceof Uint8Array) {
+  				const func = GodotRuntime.get_func(p_callback);
+  				const bytes_ptr = func(p_byte_arr, p_byte_arr_write, eval_ret.length);
+  				HEAPU8.set(eval_ret, bytes_ptr);
+  				return 29; // PACKED_BYTE_ARRAY
+  			}
+  			break;
+  
+  			// no default
+  		}
+  		return 0; // NIL
   	}
 
   var IDHandler = {
@@ -11351,416 +11240,6 @@ function dbg(...args) {
   		return 1;
   	}
 
-  
-  
-  var GodotRTCDataChannel = {
-  connect:function (p_id, p_on_open, p_on_message, p_on_error, p_on_close) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return;
-  			}
-  
-  			ref.binaryType = 'arraybuffer';
-  			ref.onopen = function (event) {
-  				p_on_open();
-  			};
-  			ref.onclose = function (event) {
-  				p_on_close();
-  			};
-  			ref.onerror = function (event) {
-  				p_on_error();
-  			};
-  			ref.onmessage = function (event) {
-  				let buffer;
-  				let is_string = 0;
-  				if (event.data instanceof ArrayBuffer) {
-  					buffer = new Uint8Array(event.data);
-  				} else if (event.data instanceof Blob) {
-  					GodotRuntime.error('Blob type not supported');
-  					return;
-  				} else if (typeof event.data === 'string') {
-  					is_string = 1;
-  					const enc = new TextEncoder('utf-8');
-  					buffer = new Uint8Array(enc.encode(event.data));
-  				} else {
-  					GodotRuntime.error('Unknown message type');
-  					return;
-  				}
-  				const len = buffer.length * buffer.BYTES_PER_ELEMENT;
-  				const out = GodotRuntime.malloc(len);
-  				HEAPU8.set(buffer, out);
-  				p_on_message(out, len, is_string);
-  				GodotRuntime.free(out);
-  			};
-  		},
-  close:function (p_id) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return;
-  			}
-  			ref.onopen = null;
-  			ref.onmessage = null;
-  			ref.onerror = null;
-  			ref.onclose = null;
-  			ref.close();
-  		},
-  get_prop:function (p_id, p_prop, p_def) {
-  			const ref = IDHandler.get(p_id);
-  			return (ref && ref[p_prop] !== undefined) ? ref[p_prop] : p_def;
-  		},
-  };
-  function _godot_js_rtc_datachannel_close(p_id) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return;
-  		}
-  		GodotRTCDataChannel.close(p_id);
-  	}
-
-  function _godot_js_rtc_datachannel_connect(p_id, p_ref, p_on_open, p_on_message, p_on_error, p_on_close) {
-  		const onopen = GodotRuntime.get_func(p_on_open).bind(null, p_ref);
-  		const onmessage = GodotRuntime.get_func(p_on_message).bind(null, p_ref);
-  		const onerror = GodotRuntime.get_func(p_on_error).bind(null, p_ref);
-  		const onclose = GodotRuntime.get_func(p_on_close).bind(null, p_ref);
-  		GodotRTCDataChannel.connect(p_id, onopen, onmessage, onerror, onclose);
-  	}
-
-  function _godot_js_rtc_datachannel_destroy(p_id) {
-  		GodotRTCDataChannel.close(p_id);
-  		IDHandler.remove(p_id);
-  	}
-
-  function _godot_js_rtc_datachannel_get_buffered_amount(p_id) {
-  		return GodotRTCDataChannel.get_prop(p_id, 'bufferedAmount', 0);
-  	}
-
-  function _godot_js_rtc_datachannel_id_get(p_id) {
-  		return GodotRTCDataChannel.get_prop(p_id, 'id', 65535);
-  	}
-
-  function _godot_js_rtc_datachannel_is_negotiated(p_id) {
-  		return GodotRTCDataChannel.get_prop(p_id, 'negotiated', 65535);
-  	}
-
-  function _godot_js_rtc_datachannel_is_ordered(p_id) {
-  		return GodotRTCDataChannel.get_prop(p_id, 'ordered', true);
-  	}
-
-  function _godot_js_rtc_datachannel_label_get(p_id) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref || !ref.label) {
-  			return 0;
-  		}
-  		return GodotRuntime.allocString(ref.label);
-  	}
-
-  function _godot_js_rtc_datachannel_max_packet_lifetime_get(p_id) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return 65535;
-  		}
-  		if (ref['maxPacketLifeTime'] !== undefined) {
-  			return ref['maxPacketLifeTime'];
-  		} else if (ref['maxRetransmitTime'] !== undefined) {
-  			// Guess someone didn't appreciate the standardization process.
-  			return ref['maxRetransmitTime'];
-  		}
-  		return 65535;
-  	}
-
-  function _godot_js_rtc_datachannel_max_retransmits_get(p_id) {
-  		return GodotRTCDataChannel.get_prop(p_id, 'maxRetransmits', 65535);
-  	}
-
-  function _godot_js_rtc_datachannel_protocol_get(p_id) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref || !ref.protocol) {
-  			return 0;
-  		}
-  		return GodotRuntime.allocString(ref.protocol);
-  	}
-
-  function _godot_js_rtc_datachannel_ready_state_get(p_id) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return 3; // CLOSED
-  		}
-  
-  		switch (ref.readyState) {
-  		case 'connecting':
-  			return 0;
-  		case 'open':
-  			return 1;
-  		case 'closing':
-  			return 2;
-  		case 'closed':
-  		default:
-  			return 3;
-  		}
-  	}
-
-  function _godot_js_rtc_datachannel_send(p_id, p_buffer, p_length, p_raw) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return 1;
-  		}
-  
-  		const bytes_array = new Uint8Array(p_length);
-  		for (let i = 0; i < p_length; i++) {
-  			bytes_array[i] = GodotRuntime.getHeapValue(p_buffer + i, 'i8');
-  		}
-  
-  		if (p_raw) {
-  			ref.send(bytes_array.buffer);
-  		} else {
-  			const string = new TextDecoder('utf-8').decode(bytes_array);
-  			ref.send(string);
-  		}
-  		return 0;
-  	}
-
-  
-  
-  
-  var GodotRTCPeerConnection = {
-  ConnectionState:{
-  new:0,
-  connecting:1,
-  connected:2,
-  disconnected:3,
-  failed:4,
-  closed:5,
-  },
-  ConnectionStateCompat:{
-  new:0,
-  checking:1,
-  connected:2,
-  completed:2,
-  disconnected:3,
-  failed:4,
-  closed:5,
-  },
-  IceGatheringState:{
-  new:0,
-  gathering:1,
-  complete:2,
-  },
-  SignalingState:{
-  stable:0,
-  'have-local-offer':1,
-  'have-remote-offer':2,
-  'have-local-pranswer':3,
-  'have-remote-pranswer':4,
-  closed:5,
-  },
-  create:function (config, onConnectionChange, onSignalingChange, onIceGatheringChange, onIceCandidate, onDataChannel) {
-  			let conn = null;
-  			try {
-  				conn = new RTCPeerConnection(config);
-  			} catch (e) {
-  				GodotRuntime.error(e);
-  				return 0;
-  			}
-  
-  			const id = IDHandler.add(conn);
-  
-  			if ('connectionState' in conn && conn['connectionState'] !== undefined) {
-  				// Use "connectionState" if supported
-  				conn.onconnectionstatechange = function (event) {
-  					if (!IDHandler.get(id)) {
-  						return;
-  					}
-  					onConnectionChange(GodotRTCPeerConnection.ConnectionState[conn.connectionState] || 0);
-  				};
-  			} else {
-  				// Fall back to using "iceConnectionState" when "connectionState" is not supported (notably Firefox).
-  				conn.oniceconnectionstatechange = function (event) {
-  					if (!IDHandler.get(id)) {
-  						return;
-  					}
-  					onConnectionChange(GodotRTCPeerConnection.ConnectionStateCompat[conn.iceConnectionState] || 0);
-  				};
-  			}
-  			conn.onicegatheringstatechange = function (event) {
-  				if (!IDHandler.get(id)) {
-  					return;
-  				}
-  				onIceGatheringChange(GodotRTCPeerConnection.IceGatheringState[conn.iceGatheringState] || 0);
-  			};
-  			conn.onsignalingstatechange = function (event) {
-  				if (!IDHandler.get(id)) {
-  					return;
-  				}
-  				onSignalingChange(GodotRTCPeerConnection.SignalingState[conn.signalingState] || 0);
-  			};
-  			conn.onicecandidate = function (event) {
-  				if (!IDHandler.get(id)) {
-  					return;
-  				}
-  				const c = event.candidate;
-  				if (!c || !c.candidate) {
-  					return;
-  				}
-  				const candidate_str = GodotRuntime.allocString(c.candidate);
-  				const mid_str = GodotRuntime.allocString(c.sdpMid);
-  				onIceCandidate(mid_str, c.sdpMLineIndex, candidate_str);
-  				GodotRuntime.free(candidate_str);
-  				GodotRuntime.free(mid_str);
-  			};
-  			conn.ondatachannel = function (event) {
-  				if (!IDHandler.get(id)) {
-  					return;
-  				}
-  				const cid = IDHandler.add(event.channel);
-  				onDataChannel(cid);
-  			};
-  			return id;
-  		},
-  destroy:function (p_id) {
-  			const conn = IDHandler.get(p_id);
-  			if (!conn) {
-  				return;
-  			}
-  			conn.onconnectionstatechange = null;
-  			conn.oniceconnectionstatechange = null;
-  			conn.onicegatheringstatechange = null;
-  			conn.onsignalingstatechange = null;
-  			conn.onicecandidate = null;
-  			conn.ondatachannel = null;
-  			IDHandler.remove(p_id);
-  		},
-  onsession:function (p_id, callback, session) {
-  			if (!IDHandler.get(p_id)) {
-  				return;
-  			}
-  			const type_str = GodotRuntime.allocString(session.type);
-  			const sdp_str = GodotRuntime.allocString(session.sdp);
-  			callback(type_str, sdp_str);
-  			GodotRuntime.free(type_str);
-  			GodotRuntime.free(sdp_str);
-  		},
-  onerror:function (p_id, callback, error) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return;
-  			}
-  			GodotRuntime.error(error);
-  			callback();
-  		},
-  };
-  function _godot_js_rtc_pc_close(p_id) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return;
-  		}
-  		ref.close();
-  	}
-
-  function _godot_js_rtc_pc_create(p_config, p_ref, p_on_connection_state_change, p_on_ice_gathering_state_change, p_on_signaling_state_change, p_on_ice_candidate, p_on_datachannel) {
-  		const wrap = function (p_func) {
-  			return GodotRuntime.get_func(p_func).bind(null, p_ref);
-  		};
-  		return GodotRTCPeerConnection.create(
-  			JSON.parse(GodotRuntime.parseString(p_config)),
-  			wrap(p_on_connection_state_change),
-  			wrap(p_on_signaling_state_change),
-  			wrap(p_on_ice_gathering_state_change),
-  			wrap(p_on_ice_candidate),
-  			wrap(p_on_datachannel)
-  		);
-  	}
-
-  
-  function _godot_js_rtc_pc_datachannel_create(p_id, p_label, p_config) {
-  		try {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return 0;
-  			}
-  
-  			const label = GodotRuntime.parseString(p_label);
-  			const config = JSON.parse(GodotRuntime.parseString(p_config));
-  
-  			const channel = ref.createDataChannel(label, config);
-  			return IDHandler.add(channel);
-  		} catch (e) {
-  			GodotRuntime.error(e);
-  			return 0;
-  		}
-  	}
-
-  function _godot_js_rtc_pc_destroy(p_id) {
-  		GodotRTCPeerConnection.destroy(p_id);
-  	}
-
-  function _godot_js_rtc_pc_ice_candidate_add(p_id, p_mid_name, p_mline_idx, p_sdp) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return;
-  		}
-  		const sdpMidName = GodotRuntime.parseString(p_mid_name);
-  		const sdpName = GodotRuntime.parseString(p_sdp);
-  		ref.addIceCandidate(new RTCIceCandidate({
-  			'candidate': sdpName,
-  			'sdpMid': sdpMidName,
-  			'sdpMlineIndex': p_mline_idx,
-  		}));
-  	}
-
-  function _godot_js_rtc_pc_local_description_set(p_id, p_type, p_sdp, p_obj, p_on_error) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return;
-  		}
-  		const type = GodotRuntime.parseString(p_type);
-  		const sdp = GodotRuntime.parseString(p_sdp);
-  		const onerror = GodotRuntime.get_func(p_on_error).bind(null, p_obj);
-  		ref.setLocalDescription({
-  			'sdp': sdp,
-  			'type': type,
-  		}).catch(function (error) {
-  			GodotRTCPeerConnection.onerror(p_id, onerror, error);
-  		});
-  	}
-
-  function _godot_js_rtc_pc_offer_create(p_id, p_obj, p_on_session, p_on_error) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return;
-  		}
-  		const onsession = GodotRuntime.get_func(p_on_session).bind(null, p_obj);
-  		const onerror = GodotRuntime.get_func(p_on_error).bind(null, p_obj);
-  		ref.createOffer().then(function (session) {
-  			GodotRTCPeerConnection.onsession(p_id, onsession, session);
-  		}).catch(function (error) {
-  			GodotRTCPeerConnection.onerror(p_id, onerror, error);
-  		});
-  	}
-
-  function _godot_js_rtc_pc_remote_description_set(p_id, p_type, p_sdp, p_obj, p_session_created, p_on_error) {
-  		const ref = IDHandler.get(p_id);
-  		if (!ref) {
-  			return;
-  		}
-  		const type = GodotRuntime.parseString(p_type);
-  		const sdp = GodotRuntime.parseString(p_sdp);
-  		const onerror = GodotRuntime.get_func(p_on_error).bind(null, p_obj);
-  		const onsession = GodotRuntime.get_func(p_session_created).bind(null, p_obj);
-  		ref.setRemoteDescription({
-  			'sdp': sdp,
-  			'type': type,
-  		}).then(function () {
-  			if (type !== 'offer') {
-  				return Promise.resolve();
-  			}
-  			return ref.createAnswer().then(function (session) {
-  				GodotRTCPeerConnection.onsession(p_id, onsession, session);
-  			});
-  		}).catch(function (error) {
-  			GodotRTCPeerConnection.onerror(p_id, onerror, error);
-  		});
-  	}
-
   function _godot_js_set_ime_active(p_active) {
   		GodotIME.ime_active(p_active);
   	}
@@ -11811,19 +11290,19 @@ function dbg(...args) {
   		const func = GodotRuntime.get_func(p_callback);
   
   		function listener_end(evt) {
-  			evt.currentTarget.cb(1 /*TTS_UTTERANCE_ENDED*/, evt.currentTarget.id, 0);
+  			evt.currentTarget.cb(1 /* TTS_UTTERANCE_ENDED */, evt.currentTarget.id, 0);
   		}
   
   		function listener_start(evt) {
-  			evt.currentTarget.cb(0 /*TTS_UTTERANCE_STARTED*/, evt.currentTarget.id, 0);
+  			evt.currentTarget.cb(0 /* TTS_UTTERANCE_STARTED */, evt.currentTarget.id, 0);
   		}
   
   		function listener_error(evt) {
-  			evt.currentTarget.cb(2 /*TTS_UTTERANCE_CANCELED*/, evt.currentTarget.id, 0);
+  			evt.currentTarget.cb(2 /* TTS_UTTERANCE_CANCELED */, evt.currentTarget.id, 0);
   		}
   
   		function listener_bound(evt) {
-  			evt.currentTarget.cb(3 /*TTS_UTTERANCE_BOUNDARY*/, evt.currentTarget.id, evt.charIndex);
+  			evt.currentTarget.cb(3 /* TTS_UTTERANCE_BOUNDARY */, evt.currentTarget.id, evt.charIndex);
   		}
   
   		const utterance = new SpeechSynthesisUtterance(GodotRuntime.parseString(p_text));
@@ -11855,148 +11334,242 @@ function dbg(...args) {
 
   
   
-  var GodotWebSocket = {
-  _onopen:function (p_id, callback, event) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return; // Godot object is gone.
-  			}
-  			const c_str = GodotRuntime.allocString(ref.protocol);
-  			callback(c_str);
-  			GodotRuntime.free(c_str);
+  var GodotJSWrapper = {
+  proxies:null,
+  cb_ret:null,
+  MyProxy:function (val) {
+  			const id = IDHandler.add(this);
+  			GodotJSWrapper.proxies.set(val, id);
+  			let refs = 1;
+  			this.ref = function () {
+  				refs++;
+  			};
+  			this.unref = function () {
+  				refs--;
+  				if (refs === 0) {
+  					IDHandler.remove(id);
+  					GodotJSWrapper.proxies.delete(val);
+  				}
+  			};
+  			this.get_val = function () {
+  				return val;
+  			};
+  			this.get_id = function () {
+  				return id;
+  			};
   		},
-  _onmessage:function (p_id, callback, event) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return; // Godot object is gone.
+  get_proxied:function (val) {
+  			const id = GodotJSWrapper.proxies.get(val);
+  			if (id === undefined) {
+  				const proxy = new GodotJSWrapper.MyProxy(val);
+  				return proxy.get_id();
   			}
-  			let buffer;
-  			let is_string = 0;
-  			if (event.data instanceof ArrayBuffer) {
-  				buffer = new Uint8Array(event.data);
-  			} else if (event.data instanceof Blob) {
-  				GodotRuntime.error('Blob type not supported');
-  				return;
-  			} else if (typeof event.data === 'string') {
-  				is_string = 1;
-  				const enc = new TextEncoder('utf-8');
-  				buffer = new Uint8Array(enc.encode(event.data));
-  			} else {
-  				GodotRuntime.error('Unknown message type');
-  				return;
-  			}
-  			const len = buffer.length * buffer.BYTES_PER_ELEMENT;
-  			const out = GodotRuntime.malloc(len);
-  			HEAPU8.set(buffer, out);
-  			callback(out, len, is_string);
-  			GodotRuntime.free(out);
-  		},
-  _onerror:function (p_id, callback, event) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return; // Godot object is gone.
-  			}
-  			callback();
-  		},
-  _onclose:function (p_id, callback, event) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return; // Godot object is gone.
-  			}
-  			const c_str = GodotRuntime.allocString(event.reason);
-  			callback(event.code, c_str, event.wasClean ? 1 : 0);
-  			GodotRuntime.free(c_str);
-  		},
-  send:function (p_id, p_data) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref || ref.readyState !== ref.OPEN) {
-  				return 1; // Godot object is gone or socket is not in a ready state.
-  			}
-  			ref.send(p_data);
-  			return 0;
-  		},
-  bufferedAmount:function (p_id) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return 0; // Godot object is gone.
-  			}
-  			return ref.bufferedAmount;
-  		},
-  create:function (socket, p_on_open, p_on_message, p_on_error, p_on_close) {
-  			const id = IDHandler.add(socket);
-  			socket.onopen = GodotWebSocket._onopen.bind(null, id, p_on_open);
-  			socket.onmessage = GodotWebSocket._onmessage.bind(null, id, p_on_message);
-  			socket.onerror = GodotWebSocket._onerror.bind(null, id, p_on_error);
-  			socket.onclose = GodotWebSocket._onclose.bind(null, id, p_on_close);
+  			IDHandler.get(id).ref();
   			return id;
   		},
-  close:function (p_id, p_code, p_reason) {
-  			const ref = IDHandler.get(p_id);
-  			if (ref && ref.readyState < ref.CLOSING) {
-  				const code = p_code;
-  				const reason = p_reason;
-  				ref.close(code, reason);
+  get_proxied_value:function (id) {
+  			const proxy = IDHandler.get(id);
+  			if (proxy === undefined) {
+  				return undefined;
+  			}
+  			return proxy.get_val();
+  		},
+  variant2js:function (type, val) {
+  			switch (type) {
+  			case 0:
+  				return null;
+  			case 1:
+  				return !!GodotRuntime.getHeapValue(val, 'i64');
+  			case 2:
+  				return GodotRuntime.getHeapValue(val, 'i64');
+  			case 3:
+  				return GodotRuntime.getHeapValue(val, 'double');
+  			case 4:
+  				return GodotRuntime.parseString(GodotRuntime.getHeapValue(val, '*'));
+  			case 24: // OBJECT
+  				return GodotJSWrapper.get_proxied_value(GodotRuntime.getHeapValue(val, 'i64'));
+  			default:
+  				return undefined;
   			}
   		},
-  destroy:function (p_id) {
-  			const ref = IDHandler.get(p_id);
-  			if (!ref) {
-  				return;
+  js2variant:function (p_val, p_exchange) {
+  			if (p_val === undefined || p_val === null) {
+  				return 0; // NIL
   			}
-  			GodotWebSocket.close(p_id, 3001, 'destroyed');
-  			IDHandler.remove(p_id);
-  			ref.onopen = null;
-  			ref.onmessage = null;
-  			ref.onerror = null;
-  			ref.onclose = null;
+  			const type = typeof (p_val);
+  			if (type === 'boolean') {
+  				GodotRuntime.setHeapValue(p_exchange, p_val, 'i64');
+  				return 1; // BOOL
+  			} else if (type === 'number') {
+  				if (Number.isInteger(p_val)) {
+  					GodotRuntime.setHeapValue(p_exchange, p_val, 'i64');
+  					return 2; // INT
+  				}
+  				GodotRuntime.setHeapValue(p_exchange, p_val, 'double');
+  				return 3; // FLOAT
+  			} else if (type === 'string') {
+  				const c_str = GodotRuntime.allocString(p_val);
+  				GodotRuntime.setHeapValue(p_exchange, c_str, '*');
+  				return 4; // STRING
+  			}
+  			const id = GodotJSWrapper.get_proxied(p_val);
+  			GodotRuntime.setHeapValue(p_exchange, id, 'i64');
+  			return 24; // OBJECT
   		},
   };
-  function _godot_js_websocket_buffered_amount(p_id) {
-  		return GodotWebSocket.bufferedAmount(p_id);
-  	}
-
-  function _godot_js_websocket_close(p_id, p_code, p_reason) {
-  		const code = p_code;
-  		const reason = GodotRuntime.parseString(p_reason);
-  		GodotWebSocket.close(p_id, code, reason);
-  	}
-
-  function _godot_js_websocket_create(p_ref, p_url, p_proto, p_on_open, p_on_message, p_on_error, p_on_close) {
-  		const on_open = GodotRuntime.get_func(p_on_open).bind(null, p_ref);
-  		const on_message = GodotRuntime.get_func(p_on_message).bind(null, p_ref);
-  		const on_error = GodotRuntime.get_func(p_on_error).bind(null, p_ref);
-  		const on_close = GodotRuntime.get_func(p_on_close).bind(null, p_ref);
-  		const url = GodotRuntime.parseString(p_url);
-  		const protos = GodotRuntime.parseString(p_proto);
-  		let socket = null;
-  		try {
-  			if (protos) {
-  				socket = new WebSocket(url, protos.split(','));
-  			} else {
-  				socket = new WebSocket(url);
+  function _godot_js_wrapper_create_cb(p_ref, p_func) {
+  		const func = GodotRuntime.get_func(p_func);
+  		let id = 0;
+  		const cb = function () {
+  			if (!GodotJSWrapper.get_proxied_value(id)) {
+  				return undefined;
   			}
+  			// The callback will store the returned value in this variable via
+  			// "godot_js_wrapper_object_set_cb_ret" upon calling the user function.
+  			// This is safe! JavaScript is single threaded (and using it in threads is not a good idea anyway).
+  			GodotJSWrapper.cb_ret = null;
+  			const args = Array.from(arguments);
+  			const argsProxy = new GodotJSWrapper.MyProxy(args);
+  			func(p_ref, argsProxy.get_id(), args.length);
+  			argsProxy.unref();
+  			const ret = GodotJSWrapper.cb_ret;
+  			GodotJSWrapper.cb_ret = null;
+  			return ret;
+  		};
+  		id = GodotJSWrapper.get_proxied(cb);
+  		return id;
+  	}
+
+  function _godot_js_wrapper_create_object(p_object, p_args, p_argc, p_convert_callback, p_exchange, p_lock, p_free_lock_callback) {
+  		const name = GodotRuntime.parseString(p_object);
+  		if (typeof (window[name]) === 'undefined') {
+  			return -1;
+  		}
+  		const convert = GodotRuntime.get_func(p_convert_callback);
+  		const freeLock = GodotRuntime.get_func(p_free_lock_callback);
+  		const args = new Array(p_argc);
+  		for (let i = 0; i < p_argc; i++) {
+  			const type = convert(p_args, i, p_exchange, p_lock);
+  			const lock = GodotRuntime.getHeapValue(p_lock, '*');
+  			args[i] = GodotJSWrapper.variant2js(type, p_exchange);
+  			if (lock) {
+  				freeLock(p_lock, type);
+  			}
+  		}
+  		try {
+  			const res = new window[name](...args);
+  			return GodotJSWrapper.js2variant(res, p_exchange);
   		} catch (e) {
+  			GodotRuntime.error(`Error calling constructor ${name} with args:`, args, 'error:', e);
+  			return -1;
+  		}
+  	}
+
+  function _godot_js_wrapper_interface_get(p_name) {
+  		const name = GodotRuntime.parseString(p_name);
+  		if (typeof (window[name]) !== 'undefined') {
+  			return GodotJSWrapper.get_proxied(window[name]);
+  		}
+  		return 0;
+  	}
+
+  function _godot_js_wrapper_object_call(p_id, p_method, p_args, p_argc, p_convert_callback, p_exchange, p_lock, p_free_lock_callback) {
+  		const obj = GodotJSWrapper.get_proxied_value(p_id);
+  		if (obj === undefined) {
+  			return -1;
+  		}
+  		const method = GodotRuntime.parseString(p_method);
+  		const convert = GodotRuntime.get_func(p_convert_callback);
+  		const freeLock = GodotRuntime.get_func(p_free_lock_callback);
+  		const args = new Array(p_argc);
+  		for (let i = 0; i < p_argc; i++) {
+  			const type = convert(p_args, i, p_exchange, p_lock);
+  			const lock = GodotRuntime.getHeapValue(p_lock, '*');
+  			args[i] = GodotJSWrapper.variant2js(type, p_exchange);
+  			if (lock) {
+  				freeLock(p_lock, type);
+  			}
+  		}
+  		try {
+  			const res = obj[method](...args);
+  			return GodotJSWrapper.js2variant(res, p_exchange);
+  		} catch (e) {
+  			GodotRuntime.error(`Error calling method ${method} on:`, obj, 'error:', e);
+  			return -1;
+  		}
+  	}
+
+  function _godot_js_wrapper_object_get(p_id, p_exchange, p_prop) {
+  		const obj = GodotJSWrapper.get_proxied_value(p_id);
+  		if (obj === undefined) {
   			return 0;
   		}
-  		socket.binaryType = 'arraybuffer';
-  		return GodotWebSocket.create(socket, on_open, on_message, on_error, on_close);
+  		if (p_prop) {
+  			const prop = GodotRuntime.parseString(p_prop);
+  			try {
+  				return GodotJSWrapper.js2variant(obj[prop], p_exchange);
+  			} catch (e) {
+  				GodotRuntime.error(`Error getting variable ${prop} on object`, obj);
+  				return 0; // NIL
+  			}
+  		}
+  		return GodotJSWrapper.js2variant(obj, p_exchange);
   	}
 
-  function _godot_js_websocket_destroy(p_id) {
-  		GodotWebSocket.destroy(p_id);
+  function _godot_js_wrapper_object_getvar(p_id, p_type, p_exchange) {
+  		const obj = GodotJSWrapper.get_proxied_value(p_id);
+  		if (obj === undefined) {
+  			return -1;
+  		}
+  		const prop = GodotJSWrapper.variant2js(p_type, p_exchange);
+  		if (prop === undefined || prop === null) {
+  			return -1;
+  		}
+  		try {
+  			return GodotJSWrapper.js2variant(obj[prop], p_exchange);
+  		} catch (e) {
+  			GodotRuntime.error(`Error getting variable ${prop} on object`, obj, e);
+  			return -1;
+  		}
   	}
 
-  function _godot_js_websocket_send(p_id, p_buf, p_buf_len, p_raw) {
-  		const bytes_array = new Uint8Array(p_buf_len);
-  		let i = 0;
-  		for (i = 0; i < p_buf_len; i++) {
-  			bytes_array[i] = GodotRuntime.getHeapValue(p_buf + i, 'i8');
+  function _godot_js_wrapper_object_set(p_id, p_name, p_type, p_exchange) {
+  		const obj = GodotJSWrapper.get_proxied_value(p_id);
+  		if (obj === undefined) {
+  			return;
   		}
-  		let out = bytes_array.buffer;
-  		if (!p_raw) {
-  			out = new TextDecoder('utf-8').decode(bytes_array);
+  		const name = GodotRuntime.parseString(p_name);
+  		try {
+  			obj[name] = GodotJSWrapper.variant2js(p_type, p_exchange);
+  		} catch (e) {
+  			GodotRuntime.error(`Error setting variable ${name} on object`, obj);
   		}
-  		return GodotWebSocket.send(p_id, out);
+  	}
+
+  function _godot_js_wrapper_object_set_cb_ret(p_val_type, p_val_ex) {
+  		GodotJSWrapper.cb_ret = GodotJSWrapper.variant2js(p_val_type, p_val_ex);
+  	}
+
+  function _godot_js_wrapper_object_setvar(p_id, p_key_type, p_key_ex, p_val_type, p_val_ex) {
+  		const obj = GodotJSWrapper.get_proxied_value(p_id);
+  		if (obj === undefined) {
+  			return -1;
+  		}
+  		const key = GodotJSWrapper.variant2js(p_key_type, p_key_ex);
+  		try {
+  			obj[key] = GodotJSWrapper.variant2js(p_val_type, p_val_ex);
+  			return 0;
+  		} catch (e) {
+  			GodotRuntime.error(`Error setting variable ${key} on object`, obj);
+  			return -1;
+  		}
+  	}
+
+  function _godot_js_wrapper_object_unref(p_id) {
+  		const proxy = IDHandler.get(p_id);
+  		if (proxy !== undefined) {
+  			proxy.unref();
+  		}
   	}
 
   
@@ -12036,7 +11609,7 @@ function dbg(...args) {
   
   
   function _godot_webgl2_glGetBufferSubData(target, offset, size, data) {
-  		const gl_context_handle = _emscripten_webgl_get_current_context(); // eslint-disable-line no-undef
+  		const gl_context_handle = _emscripten_webgl_get_current_context();
   		const gl = GL.getContext(gl_context_handle);
   		if (gl) {
   			gl.GLctx['getBufferSubData'](target, offset, HEAPU8, data, size);
@@ -12343,10 +11916,6 @@ function dbg(...args) {
       return bytes.length-1;
     };
 
-  var _strftime_l = (s, maxsize, format, tm, loc) => {
-      return _strftime(s, maxsize, format, tm); // no locale support yet
-    };
-
 
 
   
@@ -12471,6 +12040,7 @@ GodotOS.atexit(function(resolve, reject) { GodotDisplayCursor.clear(); resolve()
 GodotOS.atexit(function(resolve, reject) { GodotEventListeners.clear(); resolve(); });;
 GodotOS.atexit(function(resolve, reject) { GodotDisplayVK.clear(); resolve(); });;
 GodotOS.atexit(function(resolve, reject) { GodotIME.clear(); resolve(); });;
+GodotJSWrapper.proxies = new Map();;
 function checkIncomingModuleAPI() {
   ignoredModuleProp('fetchSettings');
 }
@@ -12479,8 +12049,6 @@ var wasmImports = {
   __assert_fail: ___assert_fail,
   /** @export */
   __call_sighandler: ___call_sighandler,
-  /** @export */
-  __syscall__newselect: ___syscall__newselect,
   /** @export */
   __syscall_accept4: ___syscall_accept4,
   /** @export */
@@ -12507,8 +12075,6 @@ var wasmImports = {
   __syscall_getdents64: ___syscall_getdents64,
   /** @export */
   __syscall_getsockname: ___syscall_getsockname,
-  /** @export */
-  __syscall_getsockopt: ___syscall_getsockopt,
   /** @export */
   __syscall_ioctl: ___syscall_ioctl,
   /** @export */
@@ -12568,6 +12134,8 @@ var wasmImports = {
   /** @export */
   emscripten_force_exit: _emscripten_force_exit,
   /** @export */
+  emscripten_get_heap_max: _emscripten_get_heap_max,
+  /** @export */
   emscripten_get_now: _emscripten_get_now,
   /** @export */
   emscripten_resize_heap: _emscripten_resize_heap,
@@ -12590,8 +12158,6 @@ var wasmImports = {
   /** @export */
   environ_sizes_get: _environ_sizes_get,
   /** @export */
-  exit: _exit,
-  /** @export */
   fd_close: _fd_close,
   /** @export */
   fd_fdstat_get: _fd_fdstat_get,
@@ -12603,8 +12169,6 @@ var wasmImports = {
   fd_write: _fd_write,
   /** @export */
   getaddrinfo: _getaddrinfo,
-  /** @export */
-  getnameinfo: _getnameinfo,
   /** @export */
   glActiveTexture: _glActiveTexture,
   /** @export */
@@ -12918,6 +12482,8 @@ var wasmImports = {
   /** @export */
   godot_js_display_window_title_set: _godot_js_display_window_title_set,
   /** @export */
+  godot_js_eval: _godot_js_eval,
+  /** @export */
   godot_js_fetch_create: _godot_js_fetch_create,
   /** @export */
   godot_js_fetch_free: _godot_js_fetch_free,
@@ -12980,48 +12546,6 @@ var wasmImports = {
   /** @export */
   godot_js_pwa_update: _godot_js_pwa_update,
   /** @export */
-  godot_js_rtc_datachannel_close: _godot_js_rtc_datachannel_close,
-  /** @export */
-  godot_js_rtc_datachannel_connect: _godot_js_rtc_datachannel_connect,
-  /** @export */
-  godot_js_rtc_datachannel_destroy: _godot_js_rtc_datachannel_destroy,
-  /** @export */
-  godot_js_rtc_datachannel_get_buffered_amount: _godot_js_rtc_datachannel_get_buffered_amount,
-  /** @export */
-  godot_js_rtc_datachannel_id_get: _godot_js_rtc_datachannel_id_get,
-  /** @export */
-  godot_js_rtc_datachannel_is_negotiated: _godot_js_rtc_datachannel_is_negotiated,
-  /** @export */
-  godot_js_rtc_datachannel_is_ordered: _godot_js_rtc_datachannel_is_ordered,
-  /** @export */
-  godot_js_rtc_datachannel_label_get: _godot_js_rtc_datachannel_label_get,
-  /** @export */
-  godot_js_rtc_datachannel_max_packet_lifetime_get: _godot_js_rtc_datachannel_max_packet_lifetime_get,
-  /** @export */
-  godot_js_rtc_datachannel_max_retransmits_get: _godot_js_rtc_datachannel_max_retransmits_get,
-  /** @export */
-  godot_js_rtc_datachannel_protocol_get: _godot_js_rtc_datachannel_protocol_get,
-  /** @export */
-  godot_js_rtc_datachannel_ready_state_get: _godot_js_rtc_datachannel_ready_state_get,
-  /** @export */
-  godot_js_rtc_datachannel_send: _godot_js_rtc_datachannel_send,
-  /** @export */
-  godot_js_rtc_pc_close: _godot_js_rtc_pc_close,
-  /** @export */
-  godot_js_rtc_pc_create: _godot_js_rtc_pc_create,
-  /** @export */
-  godot_js_rtc_pc_datachannel_create: _godot_js_rtc_pc_datachannel_create,
-  /** @export */
-  godot_js_rtc_pc_destroy: _godot_js_rtc_pc_destroy,
-  /** @export */
-  godot_js_rtc_pc_ice_candidate_add: _godot_js_rtc_pc_ice_candidate_add,
-  /** @export */
-  godot_js_rtc_pc_local_description_set: _godot_js_rtc_pc_local_description_set,
-  /** @export */
-  godot_js_rtc_pc_offer_create: _godot_js_rtc_pc_offer_create,
-  /** @export */
-  godot_js_rtc_pc_remote_description_set: _godot_js_rtc_pc_remote_description_set,
-  /** @export */
   godot_js_set_ime_active: _godot_js_set_ime_active,
   /** @export */
   godot_js_set_ime_cb: _godot_js_set_ime_cb,
@@ -13042,15 +12566,25 @@ var wasmImports = {
   /** @export */
   godot_js_tts_stop: _godot_js_tts_stop,
   /** @export */
-  godot_js_websocket_buffered_amount: _godot_js_websocket_buffered_amount,
+  godot_js_wrapper_create_cb: _godot_js_wrapper_create_cb,
   /** @export */
-  godot_js_websocket_close: _godot_js_websocket_close,
+  godot_js_wrapper_create_object: _godot_js_wrapper_create_object,
   /** @export */
-  godot_js_websocket_create: _godot_js_websocket_create,
+  godot_js_wrapper_interface_get: _godot_js_wrapper_interface_get,
   /** @export */
-  godot_js_websocket_destroy: _godot_js_websocket_destroy,
+  godot_js_wrapper_object_call: _godot_js_wrapper_object_call,
   /** @export */
-  godot_js_websocket_send: _godot_js_websocket_send,
+  godot_js_wrapper_object_get: _godot_js_wrapper_object_get,
+  /** @export */
+  godot_js_wrapper_object_getvar: _godot_js_wrapper_object_getvar,
+  /** @export */
+  godot_js_wrapper_object_set: _godot_js_wrapper_object_set,
+  /** @export */
+  godot_js_wrapper_object_set_cb_ret: _godot_js_wrapper_object_set_cb_ret,
+  /** @export */
+  godot_js_wrapper_object_setvar: _godot_js_wrapper_object_setvar,
+  /** @export */
+  godot_js_wrapper_object_unref: _godot_js_wrapper_object_unref,
   /** @export */
   godot_webgl2_glFramebufferTextureMultisampleMultiviewOVR: _godot_webgl2_glFramebufferTextureMultisampleMultiviewOVR,
   /** @export */
@@ -13066,7 +12600,11 @@ var wasmImports = {
   /** @export */
   invoke_iiiii,
   /** @export */
-  invoke_iiiiii,
+  invoke_iiiiiii,
+  /** @export */
+  invoke_iiiiiiiiii,
+  /** @export */
+  invoke_v,
   /** @export */
   invoke_vi,
   /** @export */
@@ -13076,27 +12614,21 @@ var wasmImports = {
   /** @export */
   invoke_viiii,
   /** @export */
-  invoke_viiiiiii,
-  /** @export */
-  invoke_viiij,
-  /** @export */
   proc_exit: _proc_exit,
   /** @export */
-  strftime: _strftime,
-  /** @export */
-  strftime_l: _strftime_l
+  strftime: _strftime
 };
 var wasmExports = createWasm();
 var ___wasm_call_ctors = createExportWrapper('__wasm_call_ctors', 0);
+var _free = createExportWrapper('free', 1);
 var __Z14godot_web_mainiPPc = Module['__Z14godot_web_mainiPPc'] = createExportWrapper('_Z14godot_web_mainiPPc', 2);
 var _main = Module['_main'] = createExportWrapper('__main_argc_argv', 2);
-var _malloc = createExportWrapper('malloc', 1);
-var _free = createExportWrapper('free', 1);
 var _fflush = createExportWrapper('fflush', 1);
-var _htonl = createExportWrapper('htonl', 1);
 var _htons = createExportWrapper('htons', 1);
 var _ntohs = createExportWrapper('ntohs', 1);
+var _malloc = createExportWrapper('malloc', 1);
 var ___funcs_on_exit = createExportWrapper('__funcs_on_exit', 0);
+var _htonl = createExportWrapper('htonl', 1);
 var _setThrew = createExportWrapper('setThrew', 2);
 var _emscripten_stack_init = () => (_emscripten_stack_init = wasmExports['emscripten_stack_init'])();
 var _emscripten_stack_get_free = () => (_emscripten_stack_get_free = wasmExports['emscripten_stack_get_free'])();
@@ -13105,35 +12637,11 @@ var _emscripten_stack_get_end = () => (_emscripten_stack_get_end = wasmExports['
 var __emscripten_stack_restore = (a0) => (__emscripten_stack_restore = wasmExports['_emscripten_stack_restore'])(a0);
 var __emscripten_stack_alloc = (a0) => (__emscripten_stack_alloc = wasmExports['_emscripten_stack_alloc'])(a0);
 var _emscripten_stack_get_current = () => (_emscripten_stack_get_current = wasmExports['emscripten_stack_get_current'])();
-var ___cxa_increment_exception_refcount = createExportWrapper('__cxa_increment_exception_refcount', 1);
-var ___cxa_is_pointer_type = createExportWrapper('__cxa_is_pointer_type', 1);
 
 function invoke_vii(index,a1,a2) {
   var sp = stackSave();
   try {
     getWasmTableEntry(index)(a1,a2);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_vi(index,a1) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iiii(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return getWasmTableEntry(index)(a1,a2,a3);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -13152,29 +12660,7 @@ function invoke_ii(index,a1) {
   }
 }
 
-function invoke_iiiiii(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    return getWasmTableEntry(index)(a1,a2,a3,a4,a5);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
 function invoke_viiii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiij(index,a1,a2,a3,a4) {
   var sp = stackSave();
   try {
     getWasmTableEntry(index)(a1,a2,a3,a4);
@@ -13196,6 +12682,39 @@ function invoke_iii(index,a1,a2) {
   }
 }
 
+function invoke_vi(index,a1) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_v(index) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)();
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiii(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
 function invoke_iiiii(index,a1,a2,a3,a4) {
   var sp = stackSave();
   try {
@@ -13207,10 +12726,10 @@ function invoke_iiiii(index,a1,a2,a3,a4) {
   }
 }
 
-function invoke_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
+function invoke_viii(index,a1,a2,a3) {
   var sp = stackSave();
   try {
-    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7);
+    getWasmTableEntry(index)(a1,a2,a3);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -13218,10 +12737,21 @@ function invoke_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
   }
 }
 
-function invoke_viii(index,a1,a2,a3) {
+function invoke_iiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
   var sp = stackSave();
   try {
-    getWasmTableEntry(index)(a1,a2,a3);
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7,a8,a9);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiiiii(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -13516,9 +13046,7 @@ var unexportedSymbols = [
   'webgl_enable_WEBGL_multi_draw_instanced_base_vertex_base_instance',
   'allocateUTF8',
   'allocateUTF8OnStack',
-  'GodotWebSocket',
-  'GodotRTCDataChannel',
-  'GodotRTCPeerConnection',
+  'IDBFS',
   'GodotAudio',
   'GodotAudioWorklet',
   'GodotAudioScript',
@@ -13534,12 +13062,12 @@ var unexportedSymbols = [
   'GodotEventListeners',
   'GodotPWA',
   'GodotRuntime',
-  'IDBFS',
   'GodotIME',
   'GodotInputGamepads',
   'GodotInputDragDrop',
   'GodotInput',
   'GodotWebGL2',
+  'GodotJSWrapper',
 ];
 unexportedSymbols.forEach(unexportedRuntimeSymbol);
 
@@ -13696,7 +13224,7 @@ if (typeof exports === 'object' && typeof module === 'object')
 else if (typeof define === 'function' && define['amd'])
   define([], () => Godot);
 
-const Features = { // eslint-disable-line no-unused-vars
+const Features = {
 	/**
 	 * Check whether WebGL is available. Optionally, specify a particular version of WebGL to check for.
 	 *
