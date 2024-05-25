@@ -37,6 +37,10 @@ window/energy_saving/keep_screen_on=false
 import/fbx2gltf/enabled=false
 import/blender/enabled=false
 
+[gui]
+
+theme/custom_font="res://src/font/Montserrat-Regular.ttf"
+
 [physics]
 
 common/physics_ticks_per_second=1

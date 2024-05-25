@@ -2,3 +2,4 @@
 export/*
 !export/.gdignore
 !export/web_nothreads_release_custom.zip
+!export/windows_release_x64_custom.exe
